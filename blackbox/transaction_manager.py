@@ -91,7 +91,7 @@ class TransactionManager:
                     store._tx_depth = max(0, store._tx_depth - 1)
                 if outer and store._tx_depth == 0:
                     store._savepoints.clear()
-                    if began and store.db.in_transaction and store._connection_usable:
+                    if began and store.db.in_transaction and getattr(store, '_connection_usable', True):
                         try:
                             store.db.rollback()
                         except BaseException:
