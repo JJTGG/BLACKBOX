@@ -1,8 +1,8 @@
 from __future__ import annotations
 import hashlib,json,sqlite3,threading,uuid
-from contextlib import contextmanager
 from datetime import datetime,timezone
 from enum import Enum
+from .transaction_manager import TransactionManager
 
 def utc_now():return datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
 class Role(str,Enum): ADMINISTRATOR='administrator';COMMANDER='incident_commander';INVESTIGATOR='investigator';APPROVER='approver';OBSERVER='observer'
@@ -18,31 +18,8 @@ class StaleResult(Exception):pass
 class DuplicateIncident(Exception):pass
 class Store:
  def __init__(self,path=':memory:'):
-  self.db=sqlite3.connect(path,check_same_thread=False,isolation_level=None,timeout=30);self.db.row_factory=sqlite3.Row;self.lock=threading.RLock();self._tx_depth=0;self._savepoints=[];self._savepoint_counter=0;self.db.execute('PRAGMA foreign_keys=ON');self.db.execute('PRAGMA busy_timeout=30000');self.migrate()
- @contextmanager
- def transaction(self,write=True):
-  with self.lock:
-   outer=self._tx_depth==0
-   if outer:
-    if self.db.in_transaction:raise RuntimeError('unmanaged SQLite transaction detected')
-    self.db.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
-   elif not self.db.in_transaction:raise RuntimeError('transaction state mismatch')
-   self._tx_depth+=1;sp=None
-   if not outer:
-    self._savepoint_counter+=1;sp=f'bbx_sp_{self._savepoint_counter}';self._savepoints.append(sp);self.db.execute(f'SAVEPOINT {sp}')
-   try:
-    yield self
-    if sp:self.db.execute(f'RELEASE SAVEPOINT {sp}');self._savepoints.pop()
-    self._tx_depth-=1
-    if outer:self.db.commit()
-   except BaseException:
-    try:
-     if sp:self.db.execute(f'ROLLBACK TO SAVEPOINT {sp}');self.db.execute(f'RELEASE SAVEPOINT {sp}');self._savepoints.pop()
-     elif self.db.in_transaction:self.db.rollback()
-    finally:self._tx_depth=max(0,self._tx_depth-1);self._savepoints.clear() if outer else None
-    raise
-   finally:
-    if outer and self._tx_depth==0:self._savepoints.clear()
+  self.db=sqlite3.connect(path,check_same_thread=False,isolation_level=None,timeout=30);self.db.row_factory=sqlite3.Row;self.lock=threading.RLock();self._tx_depth=0;self._savepoints=[];self._savepoint_counter=0;self.transactions=TransactionManager(self);self.db.execute('PRAGMA foreign_keys=ON');self.db.execute('PRAGMA busy_timeout=30000');self.migrate()
+ def transaction(self,write=True):return self.transactions.scope(write)
  def migrate(self):
   with self.lock:
    if self.db.in_transaction:raise RuntimeError('migration inside transaction')
