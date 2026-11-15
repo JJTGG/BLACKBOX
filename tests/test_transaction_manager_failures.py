@@ -65,6 +65,35 @@ def test_release_failure_cannot_commit_nested_or_outer_work():
         os.unlink(path)
 
 
+def test_caught_nested_release_failure_cannot_report_outer_success():
+    fd, path = tempfile.mkstemp(); os.close(fd)
+    try:
+        store = Store(path)
+        def fail(stage):
+            if stage == 'release':
+                raise RuntimeError('release injection')
+        store._transaction_failure_injector = fail
+        with pytest.raises(RuntimeError, match='Store connection is unusable'):
+            with store.transaction():
+                insert_incident(store, 'CAUGHT-OUTER')
+                with pytest.raises(RuntimeError, match='release injection'):
+                    with store.transaction():
+                        insert_incident(store, 'CAUGHT-NESTED')
+                insert_incident(store, 'AFTER-FAILURE')
+                assert store._tx_depth == 1
+                assert store._savepoints == []
+        assert store._tx_depth == 0
+        assert store._savepoints == []
+        assert store._connection_usable is False
+        assert independent_count(path, 'incidents', 'CAUGHT-OUTER') == 0
+        assert independent_count(path, 'incidents', 'CAUGHT-NESTED') == 0
+        assert independent_count(path, 'incidents', 'AFTER-FAILURE') == 0
+    finally:
+        try: store.db.close()
+        except UnboundLocalError: pass
+        os.unlink(path)
+
+
 def test_outer_commit_failure_rolls_back_and_preserves_original_error():
     fd, path = tempfile.mkstemp(); os.close(fd)
     try:
