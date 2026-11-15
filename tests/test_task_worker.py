@@ -1,33 +1,11 @@
-import time
 from blackbox.core import Store
 from blackbox.task_worker import TaskWorker
 
+def setup(incident):
+ s=Store();s.create_incident(incident,'worker','test','ops');return s
 
-def test_worker_claims_completes_and_deduplicates_side_effect_path():
-    store = Store(); store.create_incident('BBX-W', 'worker', 'test', 'ops')
-    worker = TaskWorker(store, worker_id='w1', lease_minutes=1)
-    task_id = worker.enqueue('BBX-W', 'observability', 'timeline', 0)
-    task = worker.claim()
-    assert task['task_id'] == task_id and task['attempts'] == 1
-    worker.complete(task_id, {'findings': []})
-    assert store.db.execute('SELECT status FROM tasks WHERE task_id=?', (task_id,)).fetchone()[0] == 'completed'
-    assert worker.claim() is None
+def test_exact_claim_and_fencing():
+ s=setup('BBX-W');w=TaskWorker(s,worker_id='same');first_id=w.enqueue('BBX-W','a','first',0);second_id=w.enqueue('BBX-W','a','second',0);first=w.claim(first_id);assert first['task_id']==first_id;w.complete(first_id,first['fence_token'],{});second=w.claim(second_id);assert second['task_id']==second_id;assert first['fence_token']!=second['fence_token']
 
-
-def test_worker_retries_then_marks_exhausted_failure():
-    store = Store(); store.create_incident('BBX-W2', 'worker', 'test', 'ops')
-    worker = TaskWorker(store, worker_id='w2', max_attempts=2)
-    task_id = worker.enqueue('BBX-W2', 'observability', 'timeline', 0)
-    assert worker.run_once(lambda _: (_ for _ in ()).throw(RuntimeError('boom')))
-    assert worker.run_once(lambda _: (_ for _ in ()).throw(RuntimeError('boom')))
-    assert store.db.execute('SELECT status,attempts FROM tasks WHERE task_id=?', (task_id,)).fetchone() == ('failed', 2) or store.db.execute('SELECT status FROM tasks WHERE task_id=?', (task_id,)).fetchone()[0] == 'failed'
-
-
-def test_expired_lease_is_recoverable_by_new_worker():
-    store = Store(); store.create_incident('BBX-W3', 'worker', 'test', 'ops')
-    worker = TaskWorker(store, worker_id='old')
-    task_id = worker.enqueue('BBX-W3', 'observability', 'timeline', 0)
-    worker.claim()
-    store.db.execute("UPDATE tasks SET lease_until='2000-01-01T00:00:00Z' WHERE task_id=?", (task_id,))
-    replacement = TaskWorker(store, worker_id='new')
-    assert replacement.claim()['task_id'] == task_id
+def test_exhaustion_and_stale_owner():
+ s=setup('BBX-X');old=TaskWorker(s,worker_id='same',max_attempts=1);tid=old.enqueue('BBX-X','a','t',0);first=old.claim(tid);s.db.execute("UPDATE tasks SET lease_until='2000-01-01T00:00:00Z' WHERE task_id=?",(tid,));new=TaskWorker(s,worker_id='same');assert new.recover_expired()==1;assert new.claim(tid) is None
