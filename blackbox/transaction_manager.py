@@ -14,6 +14,12 @@ class TransactionManager:
         self.store._connection_usable = False
         self.store._transaction_failure_reason = reason
 
+    def _close_unusable_connection(self):
+        try:
+            self.store.db.close()
+        finally:
+            self.store._connection_usable = False
+
     @contextmanager
     def scope(self, write=True):
         store = self.store
@@ -75,13 +81,10 @@ class TransactionManager:
                             if store._savepoints and store._savepoints[-1] == savepoint:
                                 store._savepoints.pop()
                         except BaseException:
+                            if store._savepoints and store._savepoints[-1] == savepoint:
+                                store._savepoints.pop()
                             self._unusable('savepoint release failed')
-                            if store.db.in_transaction:
-                                try:
-                                    self._inject('rollback')
-                                    store.db.rollback()
-                                except BaseException:
-                                    pass
+                            self._close_unusable_connection()
                             raise
                     elif outer:
                         if not getattr(store, '_connection_usable', True):
@@ -102,8 +105,9 @@ class TransactionManager:
                     store._tx_depth = max(0, store._tx_depth - 1)
                 if outer and store._tx_depth == 0:
                     store._savepoints.clear()
-                    if began and store.db.in_transaction and getattr(store, '_connection_usable', True):
+                    if began and getattr(store, '_connection_usable', True):
                         try:
-                            store.db.rollback()
+                            if store.db.in_transaction:
+                                store.db.rollback()
                         except BaseException:
                             self._unusable('implicit cleanup failed')
