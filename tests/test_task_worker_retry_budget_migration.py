@@ -1,13 +1,12 @@
-import os
 import sqlite3
-import tempfile
 
 from blackbox.core import Store
 from blackbox.task_worker import TaskWorker
 
 
-def _legacy_task_schema(db):
-    db.executescript('''
+def _replace_tasks_with_legacy_schema(store):
+    store.db.execute('ALTER TABLE tasks RENAME TO tasks_with_budget')
+    store.db.execute('''
         CREATE TABLE tasks(
             task_id TEXT PRIMARY KEY, incident_id TEXT NOT NULL, agent TEXT NOT NULL,
             task TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -15,6 +14,7 @@ def _legacy_task_schema(db):
             updated_at TEXT NOT NULL
         )
     ''')
+    store.db.execute('DROP TABLE tasks_with_budget')
 
 
 def _task_row(store, task_id):
@@ -24,20 +24,19 @@ def _task_row(store, task_id):
     ).fetchone()
 
 
-def test_legacy_records_are_backfilled_atomically_and_preserve_budgets():
+def test_legacy_records_are_backfilled_and_preserve_budgets():
     store = Store()
     store.create_incident('BBX-BUDGET', 'budget', 'test', 'ops')
-    _legacy_task_schema(store.db)
+    _replace_tasks_with_legacy_schema(store)
     store.db.execute(
         "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?)",
         ('legacy', 'BBX-BUDGET', 'agent', 'task', 'pending', 0, 0, None,
          '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z'),
     )
-    worker = TaskWorker(store, worker_id='first', max_attempts=4)
+    TaskWorker(store, worker_id='first', max_attempts=4)
     assert _task_row(store, 'legacy')['max_attempts'] == 4
 
-    worker.db = None if False else worker.store.db
-    second = TaskWorker(store, worker_id='second', max_attempts=9)
+    TaskWorker(store, worker_id='second', max_attempts=9)
     assert _task_row(store, 'legacy')['max_attempts'] == 4
 
 
