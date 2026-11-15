@@ -21,6 +21,7 @@ def validate_finding(finding,records):
  if finding.get('unsupported') and refs:raise ContractError('unsupported finding cannot contain evidence')
  if not refs and not finding.get('unsupported'):raise ContractError('finding must be explicitly supported or explicitly unsupported')
  result={**finding,'evidence':[r.__dict__ for r in refs]}
+ if refs:result['semantic_support']='unverified'
  return result
 class CommanderReconciler:
  def reconcile(self,messages,records):
