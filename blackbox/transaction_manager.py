@@ -68,24 +68,35 @@ class TransactionManager:
                         raise original from cleanup_error
                     raise
                 else:
-                    try:
-                        if savepoint:
+                    if savepoint is not None:
+                        try:
                             self._inject('release')
                             store.db.execute(f'RELEASE SAVEPOINT {savepoint}')
                             if store._savepoints and store._savepoints[-1] == savepoint:
                                 store._savepoints.pop()
-                        elif outer:
+                        except BaseException:
+                            self._unusable('savepoint release failed')
+                            if store.db.in_transaction:
+                                try:
+                                    self._inject('rollback')
+                                    store.db.rollback()
+                                except BaseException:
+                                    pass
+                            raise
+                    elif outer:
+                        if not getattr(store, '_connection_usable', True):
+                            raise RuntimeError('Store connection is unusable')
+                        try:
                             self._inject('commit')
                             store.db.commit()
-                    except BaseException as exc:
-                        self._unusable('transaction finalization failed')
-                        if outer and began and store.db.in_transaction:
+                        except BaseException as exc:
+                            self._unusable('outer commit failed')
                             try:
                                 self._inject('rollback')
                                 store.db.rollback()
                             except BaseException as rollback_error:
                                 raise exc from rollback_error
-                        raise
+                            raise
             finally:
                 if entered:
                     store._tx_depth = max(0, store._tx_depth - 1)
