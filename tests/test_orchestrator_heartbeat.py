@@ -21,7 +21,6 @@ def test_invoke_renews_lease_while_observability_agent_runs():
     original_run = orchestrator.agents['observability'].run
     run_started = threading.Event()
     two_renewals = threading.Event()
-    release_agent = threading.Event()
     lock = threading.Lock()
     background_renewals = 0
 
@@ -39,7 +38,6 @@ def test_invoke_renews_lease_while_observability_agent_runs():
         run_started.set()
         if not two_renewals.wait(timeout=5):
             raise AssertionError('background heartbeat renewals did not complete')
-        release_agent.set()
         return original_run(incident, task, agent_evidence, revision)
 
     worker.heartbeat = heartbeat
@@ -49,12 +47,13 @@ def test_invoke_renews_lease_while_observability_agent_runs():
             incident_id, 'observability', 'analyze_logs', evidence, revision=0
         )
     finally:
-        release_agent.set()
+        worker.heartbeat = original_heartbeat
+        orchestrator.agents['observability'].run = original_run
 
     with lock:
         renewals = background_renewals
     assert renewals >= 2
-    assert message.agent == 'observability'
+    assert message['agent'] == 'observability'
 
     task = store.db.execute(
         "SELECT status, output FROM tasks WHERE incident_id=? AND agent=? AND task=?",
@@ -62,5 +61,5 @@ def test_invoke_renews_lease_while_observability_agent_runs():
     ).fetchone()
     assert task['status'] == 'completed'
 
-    persisted = orchestrator.messages.get(message.message_id, message.revision)
+    persisted = orchestrator.messages.get(message['message_id'], message['revision'])
     assert orchestrator.messages.verify(persisted)
