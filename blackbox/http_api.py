@@ -19,9 +19,11 @@ class Authenticator:
 class API:
  def __init__(self,store,auth): self.store,self.auth=store,auth
  def get_incident(self,incident_id,user):
-  self.store.authorize(user,'observe'); row=self.store.db.execute('SELECT incident_id,title,description,status,severity FROM incidents WHERE incident_id=?',(incident_id,)).fetchone()
-  if not row: raise KeyError(incident_id)
-  return dict(row)
+  self.store.authorize(user,'observe')
+  with self.store.transaction(write=False):
+   row=self.store.db.execute('SELECT incident_id,title,description,status,severity FROM incidents WHERE incident_id=?',(incident_id,)).fetchone()
+   if not row: raise KeyError(incident_id)
+   return dict(row)
  def propose_action(self,incident_id,action,user):
   try:self.store.authorize(user,'investigate')
   except AuthorizationError: raise
