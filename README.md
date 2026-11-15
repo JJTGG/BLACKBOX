@@ -1,44 +1,33 @@
 # BLACKBOX
 
-Autonomous Incident Response & Engineering Operations Platform.
+Python 3.11+ incident-response foundation for isolated test data. It is not a production deployment.
 
-## Current implementation
-
-This branch contains an executable Python foundation with:
-
-- SQLite-backed incident, evidence, task, finding, approval, and audit persistence.
-- A constrained lifecycle state machine.
-- Six independently implemented specialist agents with structured output contracts.
-- Application-level orchestration with bounded retries and parallel specialist execution.
-- Server-side role checks and explicit approval records for sensitive actions.
-- Untrusted-evidence handling, prompt-injection detection, stale-result rejection, and a tamper-evident audit hash chain.
-- Automated tests for security boundaries, concurrency, duplicate intake, lifecycle validation, and agent behavior.
-
-This is not yet a production deployment or a claim of native autonomous-agent infrastructure. The orchestration layer is application code, and external execution adapters are intentionally absent.
-
-## Run locally
-
-Requires Python 3.11+.
+## Start
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
-pytest
+export BLACKBOX_SESSION_SECRET='replace-with-a-random-secret'
+python -c "from blackbox.core import Store,Role; from blackbox.http_api import Authenticator; from blackbox.application import serve_application; import hashlib,os; users={'observer':(hashlib.sha256(b'change-me').hexdigest(),Role.OBSERVER)}; serve_application(Store('blackbox.sqlite3'),Authenticator(users,secret=os.environ['BLACKBOX_SESSION_SECRET'])).serve_forever()"
 ```
 
-## Architecture
+The application serves `/` and authenticated `GET /incidents/{incident_id}`. Sensitive proposals use `POST /incidents/{incident_id}/actions` and require an investigator, commander, or administrator. No infrastructure operation is executed.
 
-- `blackbox/core.py`: persistence, migrations, lifecycle, authorization, approvals, and audit chain.
-- `blackbox/agents.py`: specialist specifications, bounded implementations, and output contracts.
-- `blackbox/orchestrator.py`: task coordination, parallel execution, retries, and approval proposals.
-- `tests/`: executable acceptance and security tests.
-- `docs/`: architecture, threat model, and limitations.
+## Implementation
 
-## Evidence semantics
+- `blackbox/core.py`: SQLite persistence, lifecycle, authorization, approvals, and audit chain.
+- `blackbox/agents.py`: six bounded agents; each finding explicitly has evidence references or `unsupported=true`.
+- `blackbox/validation.py`: record-aware evidence checks, structured claim relationships, commander reconciliation, and exact-output audit.
+- `blackbox/message_store.py`: durable messages, hashes, and revision history.
+- `blackbox/task_worker.py`: exact claims, leases, fencing tokens, heartbeat, retry exhaustion, and recovery.
+- `blackbox/orchestrator.py`: durable execution, message persistence, reconciliation, and audit path.
+- `blackbox/application.py`: HTTP entry point serving the web page and API.
 
-Evidence is preserved with provenance and is untrusted by default. Embedded instructions are never treated as platform instructions. Findings retain uncertainty and supporting/contradicting evidence; no external operation is executed by this repository.
+## Verification
 
-## Verification status
+Run `pytest -v` locally. `.github/workflows/ci.yml` runs syntax compilation and the full suite on Python 3.11–3.14. Committed tests are not execution evidence; inspect workflow conclusions.
 
-The repository includes tests, but test execution must be performed by CI or a local Python environment. No test result is claimed until a workflow run is inspected.
+## Limitations
+
+No production identity provider, external LLM, live telemetry integration, file quarantine, immutable external audit sink, or infrastructure executor is included. Multi-process SQLite audit guarantees remain subject to the concurrency tests and are not a production claim.
