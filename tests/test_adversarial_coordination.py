@@ -1,34 +1,14 @@
 import pytest
 from blackbox.validation import CommanderReconciler, ContractError, IndependentAuditor
 
+def msg(agent,mid,findings):return {'agent':agent,'message_id':mid,'output':{'findings':findings}}
+def ref(eid,relation='supports',excerpt='deployment evidence'):return {'evidence_id':eid,'relation':relation,'note':'directly observed','excerpt':excerpt}
+def records():return [{'evidence_id':'e1','content':'deployment evidence'},{'evidence_id':'e2','content':'infrastructure evidence'}]
 
-def msg(agent, mid, findings):
-    return {'agent': agent, 'message_id': mid, 'output': {'findings': findings}}
-
-
-def ref(eid, relation='supports'):
-    return {'evidence_id': eid, 'relation': relation, 'note': 'directly observed in fixture'}
-
-
-def test_commander_preserves_specialist_sources():
-    messages = [msg('observability', 'm1', [{'kind': 'measured', 'statement': 'deployment correlated with errors', 'confidence': 'medium', 'evidence': [ref('e1')]}]), msg('engineering_investigation', 'm2', [{'kind': 'hypothesis', 'statement': 'infrastructure anomaly may contribute', 'confidence': 'low', 'evidence': [ref('e2')]}])]
-    result = CommanderReconciler().reconcile(messages, {'e1', 'e2'})
-    assert {x['source_agent'] for x in result['findings']} == {'observability', 'engineering_investigation'}
-
-
-def test_finding_without_evidence_is_rejected():
-    messages = [msg('engineering_investigation', 'm1', [{'kind': 'hypothesis', 'statement': 'confirmed root cause', 'confidence': 'high', 'evidence': []}])]
-    with pytest.raises(ContractError): CommanderReconciler().reconcile(messages, {'e1'})
-
-
-def test_audit_rejects_unsupported_finding():
-    messages = [msg('observability', 'm1', [{'kind': 'measured', 'statement': 'observed', 'confidence': 'medium', 'evidence': [ref('e1')]}])]
-    reconciliation = {'findings': [{'kind': 'conclusion', 'statement': 'unsupported conclusion', 'confidence': 'high', 'evidence': [], 'source_agent': 'observability', 'message_id': 'm1'}]}
-    result = IndependentAuditor().review(reconciliation, messages, {'e1'})
-    assert result['status'] == 'rejected'
-
-
-def test_audit_rejects_mismatched_agent():
-    messages = [msg('observability', 'm1', [{'kind': 'measured', 'statement': 'observed', 'confidence': 'medium', 'evidence': [ref('e1')]}])]
-    reconciliation = {'findings': [{'kind': 'measured', 'statement': 'observed', 'confidence': 'medium', 'evidence': [ref('e1')], 'source_agent': 'commander', 'message_id': 'm1'}]}
-    assert IndependentAuditor().review(reconciliation, messages, {'e1'})['status'] == 'rejected'
+def test_commander_preserves_sources():
+ r=CommanderReconciler().reconcile([msg('observability','m1',[{'kind':'measured','statement':'deployment correlated','confidence':'medium','evidence':[ref('e1')]}]),msg('engineering_investigation','m2',[{'kind':'hypothesis','statement':'infrastructure anomaly','confidence':'low','evidence':[ref('e2')]}])],records());assert {x['source_agent'] for x in r['findings']}=={'observability','engineering_investigation'}
+def test_missing_evidence_is_rejected():
+ with pytest.raises(ContractError):CommanderReconciler().reconcile([msg('a','m',[{'kind':'hypothesis','statement':'cause','confidence':'high','evidence':[]}])],records())
+def test_authentic_audit_accepts_and_tampering_rejects():
+ f={'kind':'measured','statement':'observed','confidence':'medium','evidence':[ref('e1')],'claim':{'subject':'gateway','predicate':'state','value':'degraded'}};m=[msg('observability','m1',[f])];auth={'findings':[dict(f,source_agent='observability',message_id='m1')]};assert IndependentAuditor().review(auth,m,records())['status']=='accepted'
+ for bad in [dict(f,statement='forged'),dict(f,evidence=[ref('e1','contradicts')]),dict(f,claim={'subject':'worker','predicate':'state','value':'degraded'})]:assert IndependentAuditor().review({'findings':[dict(bad,source_agent='observability',message_id='m1')]},m,records())['status']=='rejected'
