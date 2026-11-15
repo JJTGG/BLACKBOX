@@ -1,48 +1,64 @@
+from __future__ import annotations
 from contextlib import contextmanager
 
 class TransactionManager:
-    """Savepoint-aware transaction state for a Store-owned SQLite connection."""
     def __init__(self, store):
         self.store = store
 
     @contextmanager
     def scope(self, write=True):
-        with self.store.lock:
-            outer = self.store._tx_depth == 0
-            if outer:
-                if self.store.db.in_transaction:
-                    raise RuntimeError('unmanaged SQLite transaction detected')
-                self.store.db.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
-            elif not self.store.db.in_transaction:
-                raise RuntimeError('transaction depth disagrees with SQLite state')
-            self.store._tx_depth += 1
+        store = self.store
+        with store.lock:
+            outer = store._tx_depth == 0
             savepoint = None
-            if not outer:
-                self.store._savepoint_counter += 1
-                savepoint = f'bbx_sp_{self.store._savepoint_counter}'
-                self.store._savepoints.append(savepoint)
-                self.store.db.execute(f'SAVEPOINT {savepoint}')
+            entered = False
             try:
-                yield
-                if savepoint:
-                    self.store.db.execute(f'RELEASE SAVEPOINT {savepoint}')
-                    self.store._savepoints.pop()
-                self.store._tx_depth -= 1
                 if outer:
-                    self.store.db.commit()
-            except BaseException:
+                    if store.db.in_transaction:
+                        raise RuntimeError('unmanaged SQLite transaction detected')
+                    store.db.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
+                elif not store.db.in_transaction:
+                    raise RuntimeError('transaction state disagrees with SQLite')
+                store._tx_depth += 1
+                entered = True
+                if not outer:
+                    store._savepoint_counter += 1
+                    savepoint = f'bbx_sp_{store._savepoint_counter}'
+                    store._savepoints.append(savepoint)
+                    try:
+                        store.db.execute(f'SAVEPOINT {savepoint}')
+                    except BaseException:
+                        store._savepoints.pop()
+                        raise
                 try:
-                    if savepoint:
-                        self.store.db.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
-                        self.store.db.execute(f'RELEASE SAVEPOINT {savepoint}')
-                        self.store._savepoints.pop()
-                    elif self.store.db.in_transaction:
-                        self.store.db.rollback()
-                finally:
-                    self.store._tx_depth = max(0, self.store._tx_depth - 1)
-                    if outer:
-                        self.store._savepoints.clear()
-                raise
+                    yield store
+                except BaseException:
+                    if savepoint is not None:
+                        try:
+                            store.db.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
+                        finally:
+                            try:
+                                store.db.execute(f'RELEASE SAVEPOINT {savepoint}')
+                            finally:
+                                if store._savepoints and store._savepoints[-1] == savepoint:
+                                    store._savepoints.pop()
+                    elif store.db.in_transaction:
+                        store.db.rollback()
+                    raise
+                else:
+                    if savepoint is not None:
+                        store.db.execute(f'RELEASE SAVEPOINT {savepoint}')
+                        if store._savepoints and store._savepoints[-1] == savepoint:
+                            store._savepoints.pop()
+                    elif outer:
+                        store.db.commit()
             finally:
-                if outer and self.store._tx_depth == 0:
-                    self.store._savepoints.clear()
+                if entered:
+                    store._tx_depth -= 1
+                if outer and store._tx_depth == 0:
+                    store._savepoints.clear()
+                    if store.db.in_transaction:
+                        try:
+                            store.db.rollback()
+                        except Exception:
+                            pass
