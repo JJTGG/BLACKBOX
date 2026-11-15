@@ -3,12 +3,13 @@ import json
 from .core import Store
 
 def build_report(store,incident_id):
- incident=store.db.execute('SELECT * FROM incidents WHERE incident_id=?',(incident_id,)).fetchone()
- if not incident: raise KeyError(incident_id)
- evidence=[dict(r) for r in store.db.execute('SELECT * FROM evidence WHERE incident_id=? ORDER BY created_at',(incident_id,))]
- findings=[dict(r) for r in store.db.execute('SELECT * FROM findings WHERE incident_id=? ORDER BY created_at',(incident_id,))]
- approvals=[dict(r) for r in store.db.execute('SELECT * FROM approvals WHERE incident_id=? ORDER BY created_at',(incident_id,))]
- audit=[dict(r) for r in store.db.execute('SELECT event_id,event_type,actor,outcome,resource,created_at FROM audit WHERE incident_id=? ORDER BY rowid',(incident_id,))]
+ with store.transaction(write=False):
+  incident=store.db.execute('SELECT * FROM incidents WHERE incident_id=?',(incident_id,)).fetchone()
+  if not incident: raise KeyError(incident_id)
+  evidence=[dict(r) for r in store.db.execute('SELECT * FROM evidence WHERE incident_id=? ORDER BY created_at',(incident_id,))]
+  findings=[dict(r) for r in store.db.execute('SELECT * FROM findings WHERE incident_id=? ORDER BY created_at',(incident_id,))]
+  approvals=[dict(r) for r in store.db.execute('SELECT * FROM approvals WHERE incident_id=? ORDER BY created_at',(incident_id,))]
+  audit=[dict(r) for r in store.db.execute('SELECT event_id,event_type,actor,outcome,resource,created_at FROM audit WHERE incident_id=? ORDER BY rowid',(incident_id,))]
  def parse_json(row,key,default):
   try:return json.loads(row[key])
   except (TypeError,KeyError,json.JSONDecodeError):return default
