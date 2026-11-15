@@ -59,8 +59,11 @@ def test_message_persists_and_reopens_with_integrity():
 def test_worker_heartbeat_fences_expired_owner():
     store=Store(); evidence(store,'BBX-W'); old=TaskWorker(store,worker_id='same',lease_minutes=1); task=old.enqueue('BBX-W','a','t',0); first=old.claim(task); store.db.execute("update tasks set lease_until='2000-01-01T00:00:00Z' where task_id=?",(task,)); new=TaskWorker(store,worker_id='same',lease_minutes=1); second=new.claim(task)
     assert first['fence_token'] != second['fence_token']
-    with pytest.raises(RuntimeError): old.complete(task,{})
-    new.complete(task,{})
+    with pytest.raises(RuntimeError): old.complete(task,first['fence_token'],{'owner':'stale'})
+    new.complete(task,second['fence_token'],{'owner':'replacement'})
+    with pytest.raises(RuntimeError): old.complete(task,first['fence_token'],{'owner':'stale-overwrite'})
+    assert store.db.execute('SELECT status,output FROM tasks WHERE task_id=?',(task,)).fetchone()['status']=='completed'
+    assert store.db.execute('SELECT output FROM tasks WHERE task_id=?',(task,)).fetchone()['output']=='{"owner": "replacement"}'
 
 def test_expired_exhausted_task_is_terminal():
     store=Store(); evidence(store,'BBX-E'); w=TaskWorker(store,worker_id='w',max_attempts=1); task=w.enqueue('BBX-E','a','t',0); w.claim(task); store.db.execute("update tasks set lease_until='2000-01-01T00:00:00Z' where task_id=?",(task,)); assert w.recover_expired()==1; assert w.claim(task) is None
